@@ -1,8 +1,10 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use rustls::{ClientConfig, ClientSession, Stream};
+use rustls::internal::pemfile::certs;
 
 const SERVER_ADDR: &str = "127.0.0.1:8080";
+const CA_CERTIFICATE: &[u8] = include_bytes!("ca_cert.pem");
 
 fn main() {
     let config = load_tls_config();
@@ -20,6 +22,7 @@ fn main() {
 
 fn load_tls_config() -> ClientConfig {
     let mut config = ClientConfig::new();
-    config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let ca_certs = certs(&mut CA_CERTIFICATE.as_ref()).unwrap();
+    config.root_store.add(&ca_certs);
     config
 }

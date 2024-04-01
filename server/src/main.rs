@@ -1,10 +1,10 @@
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use rustls::{NoClientAuth, ServerConfig, ServerSession, Stream};
+use rustls::internal::pemfile::{certs, pkcs8_private_keys};
 
-const CERT_FILE: &str = "cert.pem";
-const KEY_FILE: &str = "key.pem";
+const CERTIFICATE: &[u8] = include_bytes!("server_cert.pem");
+const PRIVATE_KEY: &[u8] = include_bytes!("server_key.pem");
 
 fn handle_client(mut stream: Stream<TcpStream, ServerSession>) {
     let mut buf = [0; 1024];
@@ -49,13 +49,9 @@ fn main() {
 }
 
 fn load_tls_config() -> ServerConfig {
-    let cert_file = fs::read(CERT_FILE).expect("Failed to read certificate file");
-    let key_file = fs::read(KEY_FILE).expect("Failed to read key file");
-
     let mut config = ServerConfig::new(NoClientAuth::new());
-    let cert = rustls::internal::pemfile::certs(&mut &cert_file[..]).unwrap();
-    let key = rustls::internal::pemfile::pkcs8_private_keys(&mut &key_file[..]).unwrap().remove(0);
+    let cert = certs(&mut CERTIFICATE.as_ref()).unwrap();
+    let key = pkcs8_private_keys(&mut PRIVATE_KEY.as_ref()).unwrap().remove(0);
     config.set_single_cert(cert, key).unwrap();
-
     config
 }

@@ -1,49 +1,48 @@
-use std::fs;
-use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_native_tls::{TlsAcceptor, TlsStream};
-use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
+use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write};
 
-const SERVER_ADDR: &str = "127.0.0.1:8080";
-const SERVER_CERT_PATH: &str = "server_cert.pem";
-const SERVER_KEY_PATH: &str = "server_key.pem";
+const SHARED_SECRET: &str = "secret_token";
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cert_data = fs::read(SERVER_CERT_PATH)?;
-    let key_data = fs::read(SERVER_KEY_PATH)?;
-
-    let cert = Identity::from_pkcs8(&cert_data, &key_data)?;
-
-    let acceptor = TlsAcceptor::from(NativeTlsAcceptor::new(Arc::new(cert))?);
-
-    let listener = TcpListener::bind(SERVER_ADDR).await?;
-    println!("Server listening on {}", SERVER_ADDR);
-
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let acceptor = acceptor.clone();
-
-        tokio::spawn(async move {
-            let mut stream = acceptor.accept(stream).await.unwrap();
-            handle_client(&mut stream).await;
-        });
-    }
+fn handle_client(mut stream: TcpStream) {
+    let mut buf = [0; 1024];
+    while match stream.read(&mut buf) {
+        Ok(size) => {
+            if size == 0 {
+                false
+            } else {
+                let message = String::from_utf8_lossy(&buf[..size]);
+                if message.trim() == SHARED_SECRET {
+                    println!("Client authenticated successfully");
+                    stream.write_all(b"Authenticated").unwrap();
+                } else {
+                    println!("Unauthorized client attempted to connect");
+                    stream.write_all(b"Unauthorized").unwrap();
+                }
+                true
+            }
+        },
+        Err(_) => {
+            println!("Error occurred, terminating connection with client");
+            false
+        }
+    } {}
 }
 
-async fn handle_client(stream: &mut TlsStream<TcpStream>) {
-    let mut buf = vec![0; 1024];
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind");
+    println!("Server listening on port 8080");
 
-    loop {
-        let size = stream.read(&mut buf).await.unwrap();
-        if size == 0 {
-            break;
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                println!("New connection: {}", stream.peer_addr().unwrap());
+                std::thread::spawn(move || {
+                    handle_client(stream);
+                });
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
         }
-
-        let message = String::from_utf8_lossy(&buf[..size]);
-        println!("Received message: {}", message);
-
-        stream.write_all(&buf[..size]).await.unwrap();
     }
 }

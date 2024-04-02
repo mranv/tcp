@@ -1,33 +1,15 @@
-use std::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio_native_tls::TlsConnector;
-use native_tls::{Certificate, TlsConnector as NativeTlsConnector};
+use std::net::TcpStream;
+use std::io::{Read, Write};
 
-const SERVER_ADDR: &str = "127.0.0.1:8080";
-const CA_CERT_PATH: &str = "ca_cert.pem";
+const SHARED_SECRET: &str = "secret_token";
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ca_cert = fs::read(CA_CERT_PATH)?;
-    let cert = Certificate::from_pem(&ca_cert)?;
+fn main() {
+    let mut stream = TcpStream::connect("127.0.0.1:8080").expect("Failed to connect to server");
+    println!("Connected to server!");
 
-    let connector = TlsConnector::from(
-        NativeTlsConnector::builder()
-            .add_root_certificate(cert.clone())
-            .build()?,
-    );
+    stream.write_all(SHARED_SECRET.as_bytes()).expect("Failed to write to server");
 
-    let stream = TcpStream::connect(SERVER_ADDR).await?;
-    let domain = SERVER_ADDR.split(':').next().unwrap();
-    let mut stream = connector.connect(domain, stream).await?;
-
-    stream.write_all(b"Hello, server!").await?;
-
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).await?;
-
-    println!("Server responded: {}", String::from_utf8_lossy(&response));
-
-    Ok(())
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("Failed to read response from server");
+    println!("Server responded: {}", response);
 }

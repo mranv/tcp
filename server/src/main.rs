@@ -1,57 +1,49 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use rustls::{NoClientAuth, ServerConfig, ServerSession, Stream};
-use rustls::internal::pemfile::{certs, pkcs8_private_keys};
+use std::fs;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_native_tls::{TlsAcceptor, TlsStream};
+use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
 
-const CERTIFICATE: &[u8] = include_bytes!("server_cert.pem");
-const PRIVATE_KEY: &[u8] = include_bytes!("server_key.pem");
+const SERVER_ADDR: &str = "127.0.0.1:8080";
+const SERVER_CERT_PATH: &str = "server_cert.pem";
+const SERVER_KEY_PATH: &str = "server_key.pem";
 
-fn handle_client(mut stream: Stream<TcpStream, ServerSession>) {
-    let mut buf = [0; 1024];
-    while match stream.read(&mut buf) {
-        Ok(size) => {
-            if size == 0 {
-                false
-            } else {
-                let message = String::from_utf8_lossy(&buf[..size]);
-                println!("Received message: {}", message);
-                stream.write_all(&buf[..size]).unwrap();
-                true
-            }
-        },
-        Err(_) => {
-            println!("Error occurred, terminating connection with client");
-            false
-        }
-    } {}
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cert_data = fs::read(SERVER_CERT_PATH)?;
+    let key_data = fs::read(SERVER_KEY_PATH)?;
 
-fn main() {
-    let config = load_tls_config();
-    let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind");
-    println!("Server listening on port 8080");
+    let cert = Identity::from_pkcs8(&cert_data, &key_data)?;
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                println!("New connection: {}", stream.peer_addr().unwrap());
-                let config = config.clone();
-                std::thread::spawn(move || {
-                    let _ = config;
-                    let _ = handle_client(stream);
-                });
-            }
-            Err(e) => {
-                println!("Error: {}", e);
-            }
-        }
+    let acceptor = TlsAcceptor::from(NativeTlsAcceptor::new(Arc::new(cert))?);
+
+    let listener = TcpListener::bind(SERVER_ADDR).await?;
+    println!("Server listening on {}", SERVER_ADDR);
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let acceptor = acceptor.clone();
+
+        tokio::spawn(async move {
+            let mut stream = acceptor.accept(stream).await.unwrap();
+            handle_client(&mut stream).await;
+        });
     }
 }
 
-fn load_tls_config() -> ServerConfig {
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    let cert = certs(&mut CERTIFICATE.as_ref()).unwrap();
-    let key = pkcs8_private_keys(&mut PRIVATE_KEY.as_ref()).unwrap().remove(0);
-    config.set_single_cert(cert, key).unwrap();
-    config
+async fn handle_client(stream: &mut TlsStream<TcpStream>) {
+    let mut buf = vec![0; 1024];
+
+    loop {
+        let size = stream.read(&mut buf).await.unwrap();
+        if size == 0 {
+            break;
+        }
+
+        let message = String::from_utf8_lossy(&buf[..size]);
+        println!("Received message: {}", message);
+
+        stream.write_all(&buf[..size]).await.unwrap();
+    }
 }

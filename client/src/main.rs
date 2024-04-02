@@ -1,28 +1,33 @@
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use rustls::{ClientConfig, ClientSession, Stream};
-use rustls::internal::pemfile::certs;
+use std::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio_native_tls::TlsConnector;
+use native_tls::{Certificate, TlsConnector as NativeTlsConnector};
 
 const SERVER_ADDR: &str = "127.0.0.1:8080";
-const CA_CERTIFICATE: &[u8] = include_bytes!("ca_cert.pem");
+const CA_CERT_PATH: &str = "ca_cert.pem";
 
-fn main() {
-    let config = load_tls_config();
-    let stream = TcpStream::connect(SERVER_ADDR).expect("Failed to connect to server");
-    let hostname = webpki::DNSNameRef::try_from_ascii_str(SERVER_ADDR.split(':').next().unwrap()).unwrap();
-    let stream = rustls::ClientSession::new(&config, hostname);
-    let mut stream = Stream::new(stream, stream);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ca_cert = fs::read(CA_CERT_PATH)?;
+    let cert = Certificate::from_pem(&ca_cert)?;
 
-    stream.write_all(b"Hello, server!").expect("Failed to write to server");
+    let connector = TlsConnector::from(
+        NativeTlsConnector::builder()
+            .add_root_certificate(cert.clone())
+            .build()?,
+    );
 
-    let mut response = String::new();
-    stream.read_to_string(&mut response).expect("Failed to read response from server");
-    println!("Server responded: {}", response);
-}
+    let stream = TcpStream::connect(SERVER_ADDR).await?;
+    let domain = SERVER_ADDR.split(':').next().unwrap();
+    let mut stream = connector.connect(domain, stream).await?;
 
-fn load_tls_config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    let ca_certs = certs(&mut CA_CERTIFICATE.as_ref()).unwrap();
-    config.root_store.add(&ca_certs);
-    config
+    stream.write_all(b"Hello, server!").await?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+
+    println!("Server responded: {}", String::from_utf8_lossy(&response));
+
+    Ok(())
 }

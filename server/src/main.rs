@@ -29,7 +29,7 @@ fn handle_client(mut stream: TcpStream) {
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:8088").expect("Failed to bind");
-    println!("Server listening on port 8080");
+    println!("Server listening on port 8088");
 
     for stream in listener.incoming() {
         match stream {
